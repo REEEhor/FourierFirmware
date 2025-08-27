@@ -1,3 +1,6 @@
+//
+// RIGHT KEYBOARD
+//
 #include <Wire.h>
 
 #define SLAVE_DEVICE_ID 8
@@ -12,9 +15,8 @@ const byte rows[] = {
 #define LEN(arr) (sizeof(arr) / sizeof (*(arr)))
 
 void setup() {
-  // join I2C bus (address optional for master)
-  Wire.begin(/* address */); 
-                             
+  Serial.begin(9600);
+  Serial.println("Setting up pins... ");
   for (int col = 0; col < LEN(cols); col++) {
     int col_pin = cols[col];
     pinMode(col_pin, INPUT_PULLUP);
@@ -23,6 +25,13 @@ void setup() {
     int row_pin = rows[row];
     pinMode(row_pin, OUTPUT);
   }
+  Serial.println("Done");
+  Serial.println("Preparing wire...");
+
+  // join I2C bus (address optional for master)
+  Wire.begin(/* address */);
+  Serial.println("Done :)");
+  Serial.println("Now entering the main loop...");
 }
 
 bool states[2][LEN(cols)][LEN(rows)];
@@ -44,14 +53,19 @@ void loop() {
       int col_pin = cols[col_id];
       bool button_is_pressed = !digitalRead(col_pin);
       current_state[col_id][row_id] = button_is_pressed;
-      
-      bool state_changed = current_state[col_id][row_id] != current_state[col_id][row_id];
-      if (!state_changed) continue;
 
+      bool state_changed = current_state[col_id][row_id] != previous_state[col_id][row_id];
+      if (!state_changed) continue;
       if (!opened_transmition) {
         Wire.beginTransmission(SLAVE_DEVICE_ID);
+        opened_transmition = true;
       }
       // Send info about the pressed button
+      {
+        Serial.print("Sending: [col="); Serial.print(col_id);
+        Serial.print(", row="); Serial.print(row_id); Serial.print("]: ");
+        Serial.println(button_is_pressed);
+      }
       Wire.write((byte)button_is_pressed);
       Wire.write((byte)col_id);
       Wire.write((byte)row_id);
@@ -61,10 +75,9 @@ void loop() {
   }
 
   if (opened_transmition) {
-      Wire.endTransmission();
+    Wire.endTransmission();
   }
 
 
   delay(10);
 }
-
