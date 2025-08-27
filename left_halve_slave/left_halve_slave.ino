@@ -15,7 +15,7 @@ const int rows[] = {
   A3, 6, 7, 8
 };
 
-typedef int KeyCode; 
+typedef int KeyCode;
 
 #define MAX_LAYERS 5
 #define LEN(arr) (sizeof(arr) / sizeof (*(arr)))
@@ -31,7 +31,7 @@ struct KeyPosition {
 };
 
 struct LayerInfo {
-  byte layer_id; 
+  byte layer_id;
   KeyPosition layer_leave_key;
 };
 
@@ -70,7 +70,7 @@ LayerStack layer_stack{};
 
 struct PressedKeys {
   bool key_is_pressed_mapping[KEYBOARD_COLS_COUNT][KEYBOARD_ROWS_COUNT]{};
-  bool is_key_currently_down(KeyPosition key) const {
+  bool is_key_pressed(KeyPosition key) const {
     return this->key_is_pressed_mapping[key.column_id][key.row_id];
   }
   void set_key_state(KeyPosition key, bool state) {
@@ -115,19 +115,18 @@ KeyCode momentary_layer(byte layer_id) {
 1|oooooo.     1|ooooo.o
 2|oooooo.     2|o.ooooo
 3|ooo.o..     3|o...ooo
-
 */
+
 const KeyCode layers_keymap [MAX_LAYERS][KEYBOARD_ROWS_COUNT][KEYBOARD_COLS_COUNT] = {
   {
-    {KEY_ESC, 'q', 'w', 'e', 'r', 't', _,                /*###*/   'y', 'u', 'i', 'o', 'p', KEY_BACKSPACE, KEY_DELETE},
-    {KEY_TAB, 'a', 's', 'd', 'f', 'g', _,                /*###*/   'h', 'j', 'k', 'l', ';', _,   KEY_KP_ENTER},
+    {KEY_ESC, 'q', 'w', 'e', 'r', 't', _,                /*###*/   'y', 'u', 'i', 'o', 'p', KEY_DELETE, KEY_BACKSPACE},
+    {KEY_TAB, 'a', 's', 'd', 'f', 'g', _,                /*###*/   'h', 'j', 'k', 'l', ';', _, KEY_KP_ENTER},
     {KEY_LEFT_SHIFT, 'z', 'x', 'c', 'v', 'b', _,         /*###*/   'n',   _, 'm', ',', '.', '/', KEY_RIGHT_SHIFT},
-    {KEY_LEFT_CTRL, KEY_LEFT_GUI, KEY_LEFT_ALT, _, ' ', _, _, /*###*/ ' ',   _,   _,   _, 'x', 'y', 'z'},
-    //{KEY_LEFT_CTRL, KEY_LEFT_GUI, KEY_LEFT_ALT, _, ' ', _, _, /*###*/ MO(1),   _,   _,   _, 'x', 'y', 'z'},
+    {KEY_LEFT_CTRL, KEY_LEFT_GUI, KEY_LEFT_ALT, _, ' ', _, _, /*###*/ MO(1),   _,   _,   _, 'x', 'y', 'z'},
   },
   {
     {  X,   X,   X,   X,   X,   X, _, /*###*/    X,   X,   X,   X,  X,  X,  X},
-    { '0', '1', '2', '3', '4', '5', _, /*###*/ '6', '7', '8', '9',  X,  _,  X},
+    { '0', '1', '2', '3', '4', '5', _, /*###*/ '6', '7', '8', '9',  X,  _,  KEY_BACKSPACE},
     {  X,   X,   X,   X,   X,   X, _, /*###*/    X,   _,   X,   X,  X,  X,  X},
     {  X,   X,   X,   _,   X,   _, _, /*###*/    X,   _,   _,   _,  X,  X,  X},
   },
@@ -145,6 +144,12 @@ const KeyCode layers_keymap [MAX_LAYERS][KEYBOARD_ROWS_COUNT][KEYBOARD_COLS_COUN
   },
 };
 
+KeyCode get_keycode_at_layer(KeyPosition key_pos, byte layer_id) {
+  const auto layer = layers_keymap[layer_id];
+  return layer[key_pos.row_id][key_pos.column_id];
+}
+
+#define BASE_LAYER 0
 #define PRESSED true
 #define RELEASED false
 
@@ -181,10 +186,30 @@ void receive_callback(int byte_count) {
   //Serial.println("============\n");
 }
 
+KeyCode get_keycode_by_passing_through_keys(KeyPosition key) {
+  KeyCode key_code = get_keycode_at_layer(key, BASE_LAYER);
+  byte result_stack_idx = layer_stack.stack_top_idx;
+
+  for (;result_stack_idx != 0; result_stack_idx--) {
+    byte layer_id = layer_stack.stack[result_stack_idx].layer_id;
+    KeyCode tmp_key_code = get_keycode_at_layer(key, layer_id);
+    if (tmp_key_code != THROUGH_KEY) {
+      key_code = tmp_key_code;
+      break;
+    };
+  }
+  return key_code;
+}
+
 void handle_key_up(KeyPosition key) {
+  if (!key_state.is_key_pressed(key)) {
+    // We encountered a key, that was released before
+    sprintf(str_buffer, "DEBUG: released key[row=%d][col=%d], which was released before", key.row_id, key.column_id);
+    Serial.println(str_buffer);
+    return;
+  }
   key_state.set_key_state(key, RELEASED);
-  const auto current_layer = layers_keymap[layer_stack.current_layer_id()];
-  KeyCode key_code = current_layer[key.row_id][key.column_id];
+  KeyCode key_code = get_keycode_by_passing_through_keys(key);
 
   if (key_code == UNDEFINED_KEY) {
     sprintf(str_buffer, "DEBUG: undefined key pressed: %d", key_code);
@@ -194,9 +219,30 @@ void handle_key_up(KeyPosition key) {
 
   if (layer_stack.current_leave_key() == key) {
     sprintf(str_buffer, "DEBUG: leaving layer number: %d (releasing all non-modifier keys)", layer_stack.current_layer_id());
-    layer_stack.pop_layer();
     Serial.println(str_buffer);
-    // TODO: don't forget to release all non modifier keys here or something
+
+    const auto current_layer = layers_keymap[layer_stack.current_layer_id()];
+
+    // Check if any keys are currently pressed and if they are not a 'through key', release them.
+    for (byte row_id = 0; row_id < KEYBOARD_ROWS_COUNT; row_id++) {
+      for (byte column_id = 0; column_id < KEYBOARD_COLS_COUNT; column_id++) {
+        KeyPosition key_pos = KeyPosition { .column_id = column_id, .row_id = row_id };
+        if (!key_state.is_key_pressed(key_pos)) continue;
+
+        KeyCode key_code = current_layer[row_id][column_id];
+        if (key_code == THROUGH_KEY) continue;
+        if (key_code < 0 || key_code > 0xff) continue;
+
+        key_state.set_key_state(key_pos, RELEASED);
+        sprintf(str_buffer, "DEBUG: auto-releasing key '%c' [%d], because leaving layer %d", key_code, key_code, layer_stack.current_layer_id());
+        Serial.println(str_buffer);
+#ifdef SEND_KEYS
+        Keyboard.release((byte)key_code);
+#endif
+      }
+    }
+
+    layer_stack.pop_layer();
     return;
   }
 
@@ -219,10 +265,10 @@ void handle_key_up(KeyPosition key) {
 
 void handle_key_down(KeyPosition key) {
   key_state.set_key_state(key, PRESSED);
-  const auto current_layer = layers_keymap[layer_stack.current_layer_id()];
-  KeyCode key_code = current_layer[key.row_id][key.column_id];
+  KeyCode key_code = get_keycode_by_passing_through_keys(key);
+
   if (key_code == UNDEFINED_KEY) {
-    sprintf(str_buffer, "DEBUG: undefined key pressed: %d", key_code);
+    sprintf(str_buffer, "DEBUG: undefined key pressed (key_code=%d)", key_code);
     Serial.println(str_buffer);
     return;
   }
@@ -236,7 +282,7 @@ void handle_key_down(KeyPosition key) {
   }
 
   if (key_code < 0 || key_code > 0xff) {
-    sprintf(str_buffer, "ERROR: The keycode was %d, which could not be printed", key_code);
+    sprintf(str_buffer, "ERROR: The keycode was [%d] (should never happened)", key_code);
     Serial.println(str_buffer);
     return;
   }
