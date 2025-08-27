@@ -69,11 +69,11 @@ public:
 LayerStack layer_stack{};
 
 struct PressedKeys {
-  bool key_is_pressed_mapping[KEYBOARD_COLS_COUNT][KEYBOARD_ROWS_COUNT]{};
-  bool is_key_pressed(KeyPosition key) const {
+  byte key_is_pressed_mapping[KEYBOARD_COLS_COUNT][KEYBOARD_ROWS_COUNT]{};
+  byte key_pressed_byte(KeyPosition key) const {
     return this->key_is_pressed_mapping[key.column_id][key.row_id];
   }
-  void set_key_state(KeyPosition key, bool state) {
+  void set_key_state(KeyPosition key, byte state) {
     this->key_is_pressed_mapping[key.column_id][key.row_id] = state;
   }
 };
@@ -117,22 +117,23 @@ KeyCode momentary_layer(byte layer_id) {
 3|ooo.o..     3|o...ooo
 */
 
+// MAIN LAYOUT DEFINITION
 const KeyCode layers_keymap [MAX_LAYERS][KEYBOARD_ROWS_COUNT][KEYBOARD_COLS_COUNT] = {
   {
-    {KEY_ESC, 'q', 'w', 'e', 'r', 't', _,                /*###*/   'y', 'u', 'i', 'o', 'p', KEY_DELETE, KEY_BACKSPACE},
+    {KEY_ESC, 'q', 'w', 'e', 'r', 't', _,                /*###*/   'y', 'u', 'i', 'o', 'p', KEY_BACKSPACE, KEY_BACKSPACE},
     {KEY_TAB, 'a', 's', 'd', 'f', 'g', _,                /*###*/   'h', 'j', 'k', 'l', ';', _, KEY_KP_ENTER},
     {KEY_LEFT_SHIFT, 'z', 'x', 'c', 'v', 'b', _,         /*###*/   'n',   _, 'm', ',', '.', '/', KEY_RIGHT_SHIFT},
     {KEY_LEFT_CTRL, KEY_LEFT_GUI, KEY_LEFT_ALT, _, ' ', _, _, /*###*/ MO(1),   _,   _,   _, 'x', 'y', 'z'},
   },
   {
-    {  X,   X,   X,   X,   X,   X, _, /*###*/    X,   X,   X,   X,  X,  X,  X},
-    { '0', '1', '2', '3', '4', '5', _, /*###*/ '6', '7', '8', '9',  X,  _,  KEY_BACKSPACE},
+    {  _,   _,   _,   _,   _,   _,  _, /*###*/    _,   _,   _,   _,  _,  KEY_DELETE,  _},
+    { '0', '1', '2', '3', '4', '5', _, /*###*/ '6', '7', '8', '9',  X,  _,  X},
     {  X,   X,   X,   X,   X,   X, _, /*###*/    X,   _,   X,   X,  X,  X,  X},
-    {  X,   X,   X,   _,   X,   _, _, /*###*/    X,   _,   _,   _,  X,  X,  X},
+    {  X,   X,   X,   _,   MO(2),   _, _, /*###*/    X,   _,   _,   _,  X,  X,  X},
   },
   {
     {X, X, X, X, X, X, _, /*###*/ X, X, X, X, X, X, X},
-    {X, X, X, X, X, X, _, /*###*/ X, X, X, X, X, _, X},
+    {X, X, X, X, KEY_KP_PLUS, X, _, /*###*/ X, X, X, X, X, _, X},
     {X, X, X, X, X, X, _, /*###*/ X, _, X, X, X, X, X},
     {X, X, X, _, X, _, _, /*###*/ X, _, _, _, X, X, X},
   },
@@ -202,22 +203,37 @@ KeyCode get_keycode_by_passing_through_keys(KeyPosition key) {
 }
 
 void handle_key_up(KeyPosition key) {
-  if (!key_state.is_key_pressed(key)) {
+  byte key_code = key_state.key_pressed_byte(key);
+  if (!key_code) {
     // We encountered a key, that was released before
     sprintf(str_buffer, "DEBUG: released key[row=%d][col=%d], which was released before", key.row_id, key.column_id);
     Serial.println(str_buffer);
     return;
   }
-  key_state.set_key_state(key, RELEASED);
-  KeyCode key_code = get_keycode_by_passing_through_keys(key);
 
-  if (key_code == UNDEFINED_KEY) {
-    sprintf(str_buffer, "DEBUG: undefined key pressed: %d", key_code);
+  if (layer_stack.current_leave_key() == key) {
+    key_state.set_key_state(key, RELEASED);
+    handle_layer_exit();
+    return;
+  }
+
+  if (key_code == PRESSED) {
+    key_state.set_key_state(key, RELEASED);
+    sprintf(str_buffer, "DEBUG: unknown key was released [row=%d][col=%d]", key.row_id, key.column_id);
     Serial.println(str_buffer);
     return;
   }
 
-  if (layer_stack.current_leave_key() == key) {
+  key_state.set_key_state(key, RELEASED);
+#ifdef SEND_KEYS
+  Keyboard.release((byte)key_code);
+#endif
+  sprintf(str_buffer, "DEBUG: releasing '%c' [%d]", key_code, key_code);
+  Serial.println(str_buffer);
+}
+
+void handle_layer_exit() {
+  while (!key_state.key_pressed_byte(layer_stack.current_leave_key())) {
     sprintf(str_buffer, "DEBUG: leaving layer number: %d (releasing all non-modifier keys)", layer_stack.current_layer_id());
     Serial.println(str_buffer);
 
@@ -226,13 +242,15 @@ void handle_key_up(KeyPosition key) {
     // Check if any keys are currently pressed and if they are not a 'through key', release them.
     for (byte row_id = 0; row_id < KEYBOARD_ROWS_COUNT; row_id++) {
       for (byte column_id = 0; column_id < KEYBOARD_COLS_COUNT; column_id++) {
+
         KeyPosition key_pos = KeyPosition { .column_id = column_id, .row_id = row_id };
-        if (!key_state.is_key_pressed(key_pos)) continue;
+        if (!key_state.key_pressed_byte(key_pos)) continue;
 
         KeyCode key_code = current_layer[row_id][column_id];
         if (key_code == THROUGH_KEY) continue;
         if (key_code < 0 || key_code > 0xff) continue;
 
+        // Lift the key up
         key_state.set_key_state(key_pos, RELEASED);
         sprintf(str_buffer, "DEBUG: auto-releasing key '%c' [%d], because leaving layer %d", key_code, key_code, layer_stack.current_layer_id());
         Serial.println(str_buffer);
@@ -241,33 +259,15 @@ void handle_key_up(KeyPosition key) {
 #endif
       }
     }
-
     layer_stack.pop_layer();
-    return;
   }
-
-  if (key_code < 0 || key_code > 0xff) {
-    sprintf(str_buffer, "ERROR: The keycode was %d, which is invalid", key_code);
-    Serial.println(str_buffer);
-    sprintf(str_buffer, "  - Key: col=%d row=%d", key.column_id, key.row_id);
-    Serial.println(str_buffer);
-    sprintf(str_buffer, "  - layer id=%d", layer_stack.current_layer_id());
-    Serial.println(str_buffer);
-    return;
-  }
-
-#ifdef SEND_KEYS
-  Keyboard.release((byte)key_code);
-#endif
-  sprintf(str_buffer, "DEBUG: release '%c' [%d]", key_code, key_code);
-  Serial.println(str_buffer);
 }
 
 void handle_key_down(KeyPosition key) {
-  key_state.set_key_state(key, PRESSED);
   KeyCode key_code = get_keycode_by_passing_through_keys(key);
 
   if (key_code == UNDEFINED_KEY) {
+    key_state.set_key_state(key, PRESSED);
     sprintf(str_buffer, "DEBUG: undefined key pressed (key_code=%d)", key_code);
     Serial.println(str_buffer);
     return;
@@ -275,6 +275,7 @@ void handle_key_down(KeyPosition key) {
 
   auto layer_id = get_momentary_layer_id(key_code);
   if (layer_id.valid) {
+    key_state.set_key_state(key, PRESSED);
     layer_stack.push_layer(LayerInfo {.layer_id = layer_id.id, .layer_leave_key = key});
     sprintf(str_buffer, "DEBUG: going to layer number: %d", layer_id.id);
     Serial.println(str_buffer);
@@ -287,6 +288,7 @@ void handle_key_down(KeyPosition key) {
     return;
   }
 
+  key_state.set_key_state(key, key_code);
 #ifdef SEND_KEYS
   Keyboard.press((byte)key_code);
 #endif
