@@ -252,9 +252,8 @@ void handle_layer_exit() {
         if (!key_state.key_pressed_byte(key_pos)) continue;
 
         // TODO:
-        //   Check if the logic here is correct.
-        //   Maybe we should use `key_state.key_pressed_byte(key_pos)`
-        //   to get the keycode that should be used to release the key.
+        // Check if the logic here is correct.
+        // Maybe we should use `key_state.key_pressed_byte(key_pos)` to get the keycode that should be used to release the key.
         //
         // Check if the key can be lifted
         KeyCode key_code = current_layer[row_id][column_id];
