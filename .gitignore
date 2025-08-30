@@ -1,0 +1,3 @@
+# Backup files in case the Arduino IDE decides to save its non-updated contents
+*.copy
+
