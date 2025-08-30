@@ -200,12 +200,9 @@ MacroArray macro_array;
 //   |    | |
 //   |    | |
 //   |    enum Descriptor: byte {
-//   |      SIMPLE_KEY = 0,  // bottom byte is the byte to be sent via `Keyboard.press(key_code)`
-//   |      NO_ACTION = 1,   // bottom byte is `enum NoActionKeyCodeType { HardwareInvalidKey, UndefinedAction }`
-//   |      THROUGH_KEY = 2,
-//   |      MACRO = 3,       // bottom byte is index into the macro array
+//   |       /* Describes, which type of KeyCode this is */
+//   |       /* See the definition above for more info :) */
 //   |    }
-//   |
 //   |
 //   |
 //   in the main layout definition:
@@ -316,12 +313,12 @@ const KeyCode layers_keymap [MAX_LAYERS][KEYBOARD_ROWS_COUNT][KEYBOARD_COLS_COUN
   },
 
   // TODO make z,x,c,v use ctrl in front of them
-  // {
-  //   {X, X, KEY_LEFT_SHIFT, X, X, X, _,                      /*###*/ X, KEY_HOME, KEY_UP_ARROW, KEY_END, X, X, X},
-  //   {X, KEY_LEFT_CTRL, KEY_LEFT_GUI, KEY_LEFT_ALT, X, X, _, /*###*/ X, KEY_LEFT_ARROW, KEY_DOWN_ARROW, KEY_RIGHT_ARROW, X, _, X},
-  //   {X, 'z', 'x', 'c', 'v', 'b', _,                         /*###*/ X, _, X, X, X, X, X}, 
-  //   {X, X, X, _, _, _, _,                                   /*###*/ X, _, _, _, X, X, X},
-  // },
+  {
+    {XX, XX, S(KEY_LEFT_SHIFT), XX, XX, XX, __,                          /*###*/ XX, S(KEY_HOME),         S(KEY_UP_ARROW), S(KEY_END),         XX, XX, XX},
+    {XX, S(KEY_LEFT_CTRL), S(KEY_LEFT_GUI), S(KEY_LEFT_ALT), XX, XX, __, /*###*/ XX, S(KEY_LEFT_ARROW), S(KEY_DOWN_ARROW), S(KEY_RIGHT_ARROW), XX, __, XX},
+    {XX, 'z', 'x', 'c', 'v', 'b', __,                                    /*###*/ XX, __, XX, XX, XX, XX, XX}, 
+    {XX, XX, XX, __, NA, __, __,                                         /*###*/ XX, __, __, __, XX, XX, XX},
+  },
   {
     { XX, XX, XX, XX, XX, XX, __, /*###*/ XX, XX, XX, XX, XX, XX, XX },
     { XX, XX, XX, XX, XX, XX, __, /*###*/ XX, XX, XX, XX, XX, __, XX },
