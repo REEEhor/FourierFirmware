@@ -6,6 +6,51 @@
 #include <Keyboard.h>
 #include <Wire.h>
 
+
+// ========================================================================================
+
+// Workaround around not being able to do `42'000` or `100'000'000'000` since my
+// version of the compiler is really dumb
+#define _HELPER_CONCAT(a,b,c,d,e,f,...) a##b##c##d##e##f
+#define CONCAT(...) _HELPER_CONCAT(__VA_ARGS__,,,,,,) // works up to 6 arguments
+#define BINARY(...) CONCAT(0b, __VA_ARGS__) // works up to 5 arguments
+
+// Usage:
+//  `BINARY(11, 001, 10)` -> `0b1100110`
+
+
+// ========================================================================================
+
+// ================================= LOGGING =================================
+
+#define ENABLE_LOG
+#define ENABLE_DEBUG_LOG
+#define STR_BUFFER_SIZE 128
+char str_buffer[STR_BUFFER_SIZE];
+
+#ifdef ENABLE_LOG
+  #define LOG_ERROR(fmt, ...) \
+    do { \
+      snprintf(str_buffer, STR_BUFFER_SIZE, "[ERROR] " fmt, ##__VA_ARGS__); \
+      Serial.println(str_buffer); \
+    } while (0)
+#else
+  #define LOG_ERROR(fmt, ...) do {} while (0)
+#endif 
+
+#ifdef ENABLE_DEBUG_LOG
+  #define DBG(fmt, ...) \
+    do { \
+      snprintf(str_buffer, STR_BUFFER_SIZE, "[debug] " fmt, ##__VA_ARGS__); \
+      Serial.println(str_buffer); \
+    } while (0)
+#else
+  #define DBG(fmt, ...) do {} while (0)
+#endif 
+
+// ============================== END OF LOGGING ==============================
+#define BIN_CONCAT(a,b) 0b##a##b
+
 #define SLAVE_DEVICE_ID 8
 
 const int cols[] = {
@@ -15,7 +60,164 @@ const int rows[] = {
   A3, 6, 7, 8
 };
 
-typedef int KeyCode;
+#define MAX_SPECIAL_SHIFT_KEYS 20
+#define MAX_MACROS 20
+
+enum class Descriptor: byte {
+  SIMPLE_KEY = 0,           // Bottom byte is the byte to be sent via `Keyboard.press(key_code)`.
+
+  HARDWARE_INVALID_KEY = 1, // The key on the keyboard cannot be pressed.
+
+  NO_ACTION = 2,            // The action for the key is not defined.
+
+  THROUGH_KEY = 3,          // Use the action from the previous layer.
+
+  MACRO_KEY = 4,            // Bottom byte is index into the macro array.
+
+  MOMENTARY_LAYER = 5,      // Bottom byte is the layer id.
+
+  SPECIAL_SHIFT = 6,        // Overides what should happen when a shift is pressed.
+
+  CZECH_KEY = 7,            // Bottom byte is the character that should be pressed,
+                            //  for example 'n' produces 'ň', shift+'n' produces 'Ň'.
+                            // Since all the keys which we want to their "Czech version" to are ASCII (e, s, c, n, d, t, o, u, ...),
+                            //  we are going to use the most significant bit of the bottom byte to mark, whether to make the key with ´ or ˇ,
+                            //  since that bit would otherwise always be 0.
+};
+
+enum class Diacritic: byte {
+  ACUTE_ACCENT = 0, // ´
+  CARON = 1,        // ˇ
+};
+
+struct KeyCode {
+  uint16_t bits;
+
+  Descriptor descriptor() const {
+    const uint16_t mask = BINARY(0000, 0111, 0000, 0000);
+    return (Descriptor)((this->bits & mask) >> 8);
+  }
+
+  bool has_shift_indicator() const {
+    const uint16_t mask = BINARY(1000, 0000, 0000, 0000);
+    return (this->bits & mask);
+  }
+
+  void set_shift_indicator(bool has_shift) {
+    uint16_t mask = BINARY(1000, 0000, 0000, 0000);
+    if (has_shift) {
+      this->bits |= mask;
+    } else {
+      this->bits &= ~mask;
+    }
+  }
+
+  byte data_bits() const {
+    const uint16_t mask = BINARY(0000, 0000, 1111, 1111);
+    return (this->bits & mask);
+  }
+
+  void set_descriptor(Descriptor descriptor) {
+    uint16_t mask = BINARY(0000, 0111, 0000, 0000);
+    uint16_t descriptor_bytes = ((uint16_t)descriptor) << 8;
+    this->bits &= ~mask;
+    this->bits |= descriptor_bytes;
+  }
+
+  void set_data_bits(byte data_bits) {
+    this->bits &= 0xff00;
+    this->bits |= data_bits;
+  }
+
+  Diacritic get_czech_diacritic() const {
+    bool is_caron = this->data_bits() & BINARY(1000, 0000);
+    return (Diacritic)is_caron;
+  }
+
+  byte get_czech_unmodified_char() const {
+    return this->data_bits() & (0111, 1111);
+  }
+
+  // ============ "Constructors" ============
+
+  static KeyCode from_parts(Descriptor descriptor, byte data_bits = 0, bool has_shift = false) {
+     KeyCode result = KeyCode { .bits = data_bits };
+     result.set_descriptor(descriptor);
+     result.set_shift_indicator(has_shift);
+
+     return result;
+  }
+
+  static KeyCode create_simple(char bits) {
+     return KeyCode::from_parts(Descriptor::SIMPLE_KEY, bits);
+  }
+
+  static KeyCode create_special_shift(KeyCode special_shift_array[2][MAX_SPECIAL_SHIFT_KEYS], byte* special_shift_array_len, KeyCode no_shift_key_code, KeyCode shift_key_code) {
+    byte new_entry_idx = *special_shift_array_len;
+    (*special_shift_array_len)++;
+
+    KeyCode* entry = special_shift_array[new_entry_idx];
+    entry[0] = no_shift_key_code;
+    entry[1] = shift_key_code;
+
+    return KeyCode::from_parts(Descriptor::SPECIAL_SHIFT, new_entry_idx, /* is special shift: */ true);
+  }
+
+  static KeyCode create_momentary_layer(byte layer_id) {
+    return KeyCode::from_parts(Descriptor::MOMENTARY_LAYER, layer_id);
+  }
+
+  static KeyCode create_czech_key(char unmodified_char, Diacritic modifier) {
+    byte bits = unmodified_char | ((byte)modifier << 7);
+    return KeyCode::from_parts(Descriptor::CZECH_KEY, bits);
+  }
+
+  // TODO: static KeyCode create_macro(... macro arr ...) { ... }
+
+};
+
+struct SpecialShiftArray {
+  KeyCode data[2][MAX_SPECIAL_SHIFT_KEYS];
+  byte len = 0;
+};
+SpecialShiftArray special_shift_array;
+
+struct MacroArray {
+  char* data[MAX_MACROS];
+  byte len = 0;
+};
+MacroArray macro_array;
+
+// Requirements:
+//  - do something different when shift 
+//    - implement via `Keyboard.release('SHIFT')` which returns the number of keys released
+//
+//  - be able to print czech symbols
+//    - maybe via macros?
+//
+//
+//   XXXXXXXX XXXXXXXX
+//   |    | |
+//   |    | |
+//   |    enum Descriptor: byte {
+//   |      SIMPLE_KEY = 0,  // bottom byte is the byte to be sent via `Keyboard.press(key_code)`
+//   |      NO_ACTION = 1,   // bottom byte is `enum NoActionKeyCodeType { HardwareInvalidKey, UndefinedAction }`
+//   |      THROUGH_KEY = 2,
+//   |      MACRO = 3,       // bottom byte is index into the macro array
+//   |    }
+//   |
+//   |
+//   |
+//   in the main layout definition:
+//     - "if shift is pressed, go to the shift alternate keycodes array" indicator bit
+//     - bottom byte is index into the array of shifted keys
+//       - the element of the array is two field array [keycode-without-shift, keycode-with-shift]
+//   in the shifted keys array:
+//     - whether the shift key should be pressed or not for that key
+//     - mostly useful for SIMPLE_KEY
+//
+//
+
 
 #define MAX_LAYERS 5
 #define LEN(arr) (sizeof(arr) / sizeof (*(arr)))
@@ -60,9 +262,9 @@ public:
   void pop_layer() {
     this->stack_top_idx--;
     if (this->stack_top_idx < 0) {
-      this->stack_top_idx = 0;
-      Serial.println("Error: tried to pop stack with one layer");
-    }
+       this->stack_top_idx = 0;
+       LOG_ERROR("tried to pop layer stack with one layer");
+     }
   }
 
 };
@@ -70,7 +272,7 @@ LayerStack layer_stack{};
 
 struct PressedKeys {
   byte key_is_pressed_mapping[KEYBOARD_COLS_COUNT][KEYBOARD_ROWS_COUNT]{};
-  byte key_pressed_byte(KeyPosition key) const {
+  byte release_byte_for(KeyPosition key) const {
     return this->key_is_pressed_mapping[key.column_id][key.row_id];
   }
   void set_key_state(KeyPosition key, byte state) {
@@ -79,33 +281,12 @@ struct PressedKeys {
 };
 PressedKeys key_state{};
 
-const KeyCode MOMENTARY_LAYER_BASE = 1000;
-const KeyCode MOMENTARY_LAYER_MAX = MOMENTARY_LAYER_BASE + MAX_LAYERS;
-
-struct GetMomentaryLayerIdResult {
-  KeyCode id;
-  bool valid;
-};
-GetMomentaryLayerIdResult get_momentary_layer_id(KeyCode key_code) {
-  bool valid = (MOMENTARY_LAYER_BASE <= key_code) && (key_code <= MOMENTARY_LAYER_MAX);
-  if (!valid) {
-    return GetMomentaryLayerIdResult{};
-  }
-
-  return GetMomentaryLayerIdResult {
-    .id = key_code - MOMENTARY_LAYER_BASE,
-    .valid = true,
-  };
-}
-
-const KeyCode _ = -1;
-const KeyCode UNDEFINED_KEY = _;
-const KeyCode X = 1;
-const KeyCode THROUGH_KEY = X;
-KeyCode momentary_layer(byte layer_id) {
-  return MOMENTARY_LAYER_BASE + layer_id;
-}
-#define MO momentary_layer
+#define MO(layer_id) KeyCode::create_momentary_layer(layer_id)
+#define S(chr)       KeyCode::create_simple(chr)
+#define CZ(chr)      KeyCode::create_czech_key(chr)
+#define __           KeyCode::from_parts(Descriptor::HARDWARE_INVALID_KEY)
+#define NA           KeyCode::from_parts(Descriptor::NO_ACTION)
+#define XX           KeyCode::from_parts(Descriptor::THROUGH_KEY)
 
 /*
    LEFT          RIGHT
@@ -120,34 +301,41 @@ KeyCode momentary_layer(byte layer_id) {
 // MAIN LAYOUT DEFINITION
 const KeyCode layers_keymap [MAX_LAYERS][KEYBOARD_ROWS_COUNT][KEYBOARD_COLS_COUNT] = {
   {
-    {KEY_ESC, 'q', 'w', 'e', 'r', 't', _,                /*###*/   'y', 'u', 'i', 'o', 'p', KEY_BACKSPACE, KEY_BACKSPACE},
-    {KEY_TAB, 'a', 's', 'd', 'f', 'g', _,                /*###*/   'h', 'j', 'k', 'l', ';', _, KEY_KP_ENTER},
-    {KEY_LEFT_SHIFT, 'z', 'x', 'c', 'v', 'b', _,         /*###*/   'n',   _, 'm', ',', '.', '/', KEY_RIGHT_SHIFT},
-    {KEY_LEFT_CTRL, KEY_LEFT_GUI, KEY_LEFT_ALT, _, ' ', _, _, /*###*/ MO(1),   _,   _,   _, 'x', 'y', 'z'},
+    {S(KEY_ESC), S('q'), S('w'), S('e'), S('r'), S('t'), __,                /*###*/   S('y'), S('u'), S('i'), S('o'), S('p'), S(KEY_BACKSPACE), S(KEY_BACKSPACE)},
+    {S(KEY_TAB), S('a'), S('s'), S('d'), S('f'), S('g'), __,                /*###*/   S('h'), S('j'), S('k'), S('l'), S(';'), __, S(KEY_KP_ENTER)},
+    {S(KEY_LEFT_SHIFT), S('z'), S('x'), S('c'), S('v'), S('b'), __,         /*###*/   S('n'),  __, S('m'), S(','), S('.'), S('/'), S(KEY_RIGHT_SHIFT)},
+    {S(KEY_LEFT_CTRL), S(KEY_LEFT_GUI), S(KEY_LEFT_ALT), __, S(' '), __, __, /*###*/ MO(1),   __,   __,   __, S('x'), S('y'), S('z')},
   },
 
   // TODO the ( " ) could have a better meaning with shift held down
   {
-    {  '`',   _,   _,   _,   _,   _,  _,         /*###*/   _,   _,   _,   _,    _,  KEY_DELETE,  _},
-    { '0', '1', '2', '3', '4', '5', _,           /*###*/ '6', '7', '8', '9',    X,  _,  X},
-    {  X,   '\\',   '9',   '\'',   '0',   X, _,  /*###*/ '-',   _, '=', '[',  ']',  _,  X},
-    {  X,   KEY_MENU,   X,   _,   MO(2),   _, _, /*###*/   _,   _,   _,   _,    X,  X,  X},
+    { S('`'),      NA,     NA,     NA,      NA,     __, __, /*###*/ NA, NA, NA, NA, NA, S(KEY_DELETE), },
+    { S('0'),  S('1'), S('2'), S('3'),  S('4'), S('5'), __, /*###*/ S('6'), S('7'), S('8'), S('9'), XX, __, XX },
+    {     XX, S('\\'), S('9'), S('\''), S('0'),     XX, __, /*###*/ S('-'), __, S('='), S('['), S(']'), NA, XX },
+    { XX, S(KEY_MENU),     XX,      __,  MO(2),     __, __, /*###*/ NA, __, __, __, XX, XX, XX },
   },
-  //
+
   // TODO make z,x,c,v use ctrl in front of them
+  // {
+  //   {X, X, KEY_LEFT_SHIFT, X, X, X, _,                      /*###*/ X, KEY_HOME, KEY_UP_ARROW, KEY_END, X, X, X},
+  //   {X, KEY_LEFT_CTRL, KEY_LEFT_GUI, KEY_LEFT_ALT, X, X, _, /*###*/ X, KEY_LEFT_ARROW, KEY_DOWN_ARROW, KEY_RIGHT_ARROW, X, _, X},
+  //   {X, 'z', 'x', 'c', 'v', 'b', _,                         /*###*/ X, _, X, X, X, X, X}, 
+  //   {X, X, X, _, _, _, _,                                   /*###*/ X, _, _, _, X, X, X},
+  // },
   {
-    {X, X, KEY_LEFT_SHIFT, X, X, X, _,                      /*###*/ X, KEY_HOME, KEY_UP_ARROW, KEY_END, X, X, X},
-    {X, KEY_LEFT_CTRL, KEY_LEFT_GUI, KEY_LEFT_ALT, X, X, _, /*###*/ X, KEY_LEFT_ARROW, KEY_DOWN_ARROW, KEY_RIGHT_ARROW, X, _, X},
-    {X, 'z', 'x', 'c', 'v', 'b', _,                         /*###*/ X, _, X, X, X, X, X}, 
-    {X, X, X, _, _, _, _,                                   /*###*/ X, _, _, _, X, X, X},
-  },
-  {
-    {X, X, X, X, X, X, _, /*###*/ X, X, X, X, X, X, X},
-    {X, X, X, X, X, X, _, /*###*/ X, X, X, X, X, _, X},
-    {X, X, X, X, X, X, _, /*###*/ X, _, X, X, X, X, X},
-    {X, X, X, _, X, _, _, /*###*/ X, _, _, _, X, X, X},
+    { XX, XX, XX, XX, XX, XX, __, /*###*/ XX, XX, XX, XX, XX, XX, XX },
+    { XX, XX, XX, XX, XX, XX, __, /*###*/ XX, XX, XX, XX, XX, __, XX },
+    { XX, XX, XX, XX, XX, XX, __, /*###*/ XX, __, XX, XX, XX, XX, XX },
+    { XX, XX, XX, __, XX, __, __, /*###*/ XX, __, __, __, XX, XX, XX },
   },
 };
+
+#undef MO(layer_id)
+#undef S(chr)
+#undef CZ(chr)
+#undef __
+#undef NA
+#undef XX
 
 KeyCode get_keycode_at_layer(KeyPosition key_pos, byte layer_id) {
   const auto layer = layers_keymap[layer_id];
@@ -155,20 +343,18 @@ KeyCode get_keycode_at_layer(KeyPosition key_pos, byte layer_id) {
 }
 
 #define BASE_LAYER 0
-#define PRESSED true
+#define PRESSED_BUT_NO_INFO true
 #define RELEASED false
 
-char str_buffer[128];
 const byte BYTES_PER_MESSAGE = 3;
 
 void receive_callback(int byte_count) {
   if (byte_count == 0) {
-    Serial.println("Warning: received a zero byte message");
+    LOG_ERROR("Received a zero byte message");
     return;
   }
   if (byte_count % BYTES_PER_MESSAGE != 0) {
-    sprintf(str_buffer, "Error: received %d bytes, but multiple of %d are expected", byte_count, BYTES_PER_MESSAGE);
-    Serial.println(str_buffer);
+    LOG_ERROR("Received %d bytes, but multiple of %d are expected", byte_count, BYTES_PER_MESSAGE);
     return;
   }
 
@@ -192,13 +378,13 @@ void receive_callback(int byte_count) {
 }
 
 KeyCode get_keycode_by_passing_through_keys(KeyPosition key) {
-  KeyCode key_code = get_keycode_at_layer(key, BASE_LAYER);
+  KeyCode key_code = get_keycode_at_layer(key, layer_stack.stack[0].layer_id);
   byte result_stack_idx = layer_stack.stack_top_idx;
 
   for (;result_stack_idx != 0; result_stack_idx--) {
     byte layer_id = layer_stack.stack[result_stack_idx].layer_id;
     KeyCode tmp_key_code = get_keycode_at_layer(key, layer_id);
-    if (tmp_key_code != THROUGH_KEY) {
+    if (tmp_key_code.descriptor() != Descriptor::THROUGH_KEY) {
       key_code = tmp_key_code;
       break;
     };
@@ -207,11 +393,10 @@ KeyCode get_keycode_by_passing_through_keys(KeyPosition key) {
 }
 
 void handle_key_up(KeyPosition key) {
-  byte key_code = key_state.key_pressed_byte(key);
-  if (!key_code) {
+  byte byte_for_release = key_state.release_byte_for(key);
+  if (!byte_for_release) {
     // We encountered a key, that was released before
-    sprintf(str_buffer, "DEBUG: released key[row=%d][col=%d], which was released before", key.row_id, key.column_id);
-    Serial.println(str_buffer);
+    DBG("Released key[row=%d][col=%d], which was released before", key.row_id, key.column_id);
     return;
   }
 
@@ -221,55 +406,49 @@ void handle_key_up(KeyPosition key) {
     return;
   }
 
-  if (key_code == PRESSED) {
+  if (byte_for_release == PRESSED_BUT_NO_INFO) {
     key_state.set_key_state(key, RELEASED);
-    sprintf(str_buffer, "DEBUG: unknown key was released [row=%d][col=%d]", key.row_id, key.column_id);
-    Serial.println(str_buffer);
+    DBG("unknown key was released [row=%d][col=%d]", key.row_id, key.column_id);
     return;
   }
 
   key_state.set_key_state(key, RELEASED);
   #ifdef SEND_KEYS
-    Keyboard.release((byte)key_code);
+    Keyboard.release(byte_for_release);
   #endif
-  sprintf(str_buffer, "DEBUG: releasing '%c' [%d]", key_code, key_code);
-  Serial.println(str_buffer);
+  DBG("released '%c' [%d]", byte_for_release, byte_for_release);
 }
 
 void handle_layer_exit() {
-  while (!key_state.key_pressed_byte(layer_stack.current_leave_key())) {
-    sprintf(str_buffer, "DEBUG: leaving layer number: %d (releasing non-through keys)", layer_stack.current_layer_id());
-    Serial.println(str_buffer);
+  // Check if the key that holds the current layer is held down
+  while (!key_state.release_byte_for(layer_stack.current_leave_key())) {
+    DBG("Leaving layer [%d] (releasing non-through keys)", layer_stack.current_layer_id());
 
     const auto current_layer = layers_keymap[layer_stack.current_layer_id()];
 
-    // Check if any keys are currently pressed and if they are not a 'through key', release them.
+    // Check if any keys are currently pressed and if they are not a 'through key', release them
     for (byte row_id = 0; row_id < KEYBOARD_ROWS_COUNT; row_id++) {
       for (byte column_id = 0; column_id < KEYBOARD_COLS_COUNT; column_id++) {
-
-        // Check if the key is currently held down
         KeyPosition key_pos = KeyPosition { .column_id = column_id, .row_id = row_id };
-        if (!key_state.key_pressed_byte(key_pos)) continue;
 
-        // TODO:
-        //   Check if the logic here is correct.
-        //   Maybe we should use `key_state.key_pressed_byte(key_pos)`
-        //   to get the keycode that should be used to release the key.
-        //
-        // Check if the key can be lifted
+        // Check if the key can or should be released
+        byte release_byte = key_state.release_byte_for(key_pos);
+        if (release_byte == RELEASED || release_byte == PRESSED_BUT_NO_INFO) continue;
+
+        // Skip releasing of through keys, we want to keep them pressed
+        // For example SHIFT key should not be released when leaving the layer if it is being held down via a through key
         KeyCode key_code = current_layer[row_id][column_id];
-        if (key_code == THROUGH_KEY) continue;
-        if (key_code < 0 || key_code > 0xff) continue;
+        if (key_code.descriptor() == Descriptor::THROUGH_KEY) continue;
 
-        // Lift the key up
+        // Release the key
         key_state.set_key_state(key_pos, RELEASED);
-        sprintf(str_buffer, "DEBUG: auto-releasing key '%c' [%d], because leaving layer %d", key_code, key_code, layer_stack.current_layer_id());
-        Serial.println(str_buffer);
         #ifdef SEND_KEYS
-          Keyboard.release((byte)key_code);
+          Keyboard.release(release_byte);
         #endif
+        DBG("auto-released key '%c' [%d], because leaving layer %d", release_byte, release_byte, layer_stack.current_layer_id());
       }
     }
+
     layer_stack.pop_layer();
   }
 }
@@ -277,34 +456,72 @@ void handle_layer_exit() {
 void handle_key_down(KeyPosition key) {
   KeyCode key_code = get_keycode_by_passing_through_keys(key);
 
-  if (key_code == UNDEFINED_KEY) {
-    key_state.set_key_state(key, PRESSED);
-    sprintf(str_buffer, "DEBUG: undefined key pressed (key_code=%d)", key_code);
-    Serial.println(str_buffer);
-    return;
-  }
+  switch(key_code.descriptor()) {
+    case Descriptor::SIMPLE_KEY: {
+      byte byte_to_press = key_code.data_bits();
+      key_state.set_key_state(key, byte_to_press);
+      #ifdef SEND_KEYS
+        Keyboard.press(byte_to_press);
+      #endif
+      DBG("PRESS '%c' [%d]", byte_to_press, byte_to_press);
+      return;
+    }
+    case Descriptor::HARDWARE_INVALID_KEY:
+      LOG_ERROR("");
+      LOG_ERROR("o.O ! A key that should not be possible to use on the keyboard was pressed ! O.o");
+      LOG_ERROR("  hint: This is probably because there is a `__` in a bad spot in layout definition ;)");
+      LOG_ERROR("");
+      return;
+    case Descriptor::NO_ACTION:
+      DBG("No-action key was pressed");
+      return;
+    case Descriptor::THROUGH_KEY:
+      LOG_ERROR("Probably a through key is in the bottom row at [col=%d][row=%d]", key.column_id, key.row_id);
+      return;
+    case Descriptor::MACRO_KEY: {
+      byte macro_idx = key_code.data_bits();
+      DBG("(TODO) Pressed macro key for macro with idx %d", macro_idx);
 
-  auto layer_id = get_momentary_layer_id(key_code);
-  if (layer_id.valid) {
-    key_state.set_key_state(key, PRESSED);
-    layer_stack.push_layer(LayerInfo {.layer_id = layer_id.id, .layer_leave_key = key});
-    sprintf(str_buffer, "DEBUG: going to layer number: %d", layer_id.id);
-    Serial.println(str_buffer);
-    return;
-  }
+      //TODO
+      return;
+    }
+    case Descriptor::MOMENTARY_LAYER: {
+      byte layer_id = key_code.data_bits();
+      if (layer_id) {
+        key_state.set_key_state(key, PRESSED_BUT_NO_INFO);
+        layer_stack.push_layer(LayerInfo {.layer_id = layer_id, .layer_leave_key = key});
+        DBG("going to layer number: %d", layer_id);
+        return;
+      }
 
-  if (key_code < 0 || key_code > 0xff) {
-    sprintf(str_buffer, "ERROR: The keycode was [%d] (should never happened)", key_code);
-    Serial.println(str_buffer);
-    return;
-  }
+     // TODO
+      return;
+    }
+    case Descriptor::SPECIAL_SHIFT: {
+      byte shift_array_idx = key_code.data_bits();
+      DBG("(TODO) Pressed shift-alternative key for with idx %d", shift_array_idx);
 
-  key_state.set_key_state(key, key_code);
-#ifdef SEND_KEYS
-  Keyboard.press((byte)key_code);
-#endif
-  sprintf(str_buffer, "DEBUG: PRESS '%c' [%d]", key_code, key_code);
-  Serial.println(str_buffer);
+      // TODO
+      // KeyCode non_shift_key_code = shift_array_or_something[shift_array_idx][0];
+      // KeyCode shift_key_code = shift_array_or_something[shift_array_idx][1];
+      return;
+    }
+    case Descriptor::CZECH_KEY: {
+      char pressed_char = key_code.get_czech_unmodified_char();
+
+      if (key_code.get_czech_diacritic() == Diacritic::CARON) {
+        DBG("(TODO) Pressed czech key '%c' with CARON", pressed_char); 
+      } else {
+        DBG("(TODO) Pressed czech key '%c' with ACUTE_ACCENT", pressed_char); 
+      }
+
+      // TODO
+      // // Not this since we have to modify that buffer
+      // char[] acute_macro_buffer = "AltGr_up_down X_up_down";
+      // char[] caron_macro_buffer = "Shift_up AltGr_up_down X_up_down";
+      return;
+    }
+  }
 }
 
 
@@ -320,7 +537,7 @@ void setup() {
     int row_pin = rows[row];
     pinMode(row_pin, OUTPUT);
   }
-  Serial.println("I'm allive :D");
+  DBG("I'm allive :D");
 
   const byte INVALID_KEY_POSITION_COORDINATE = 0xff; // There will never be a key at row 255 or column 255
   layer_stack.top().layer_leave_key.row_id = INVALID_KEY_POSITION_COORDINATE;
@@ -359,8 +576,5 @@ void loop() {
     digitalWrite(row_pin, HIGH);
   }
 
-  delay(10);
+  delay(5);
 }
-
-
-
