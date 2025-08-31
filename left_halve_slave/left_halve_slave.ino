@@ -292,32 +292,32 @@ PressedKeys key_state{};
 0|oooooo.     0|ooooooo
 1|oooooo.     1|ooooo.o
 2|oooooo.     2|o.ooooo
-3|ooo.o..     3|o...ooo
+3|ooo.o..     3|o..oooo
 */
 
 // MAIN LAYOUT DEFINITION
 const KeyCode layers_keymap [MAX_LAYERS][KEYBOARD_ROWS_COUNT][KEYBOARD_COLS_COUNT] = {
   {
-    {S(KEY_ESC), S('q'), S('w'), S('e'), S('r'), S('t'), __,                /*###*/   S('y'), S('u'), S('i'), S('o'), S('p'), S(KEY_BACKSPACE), S(KEY_BACKSPACE)},
-    {S(KEY_TAB), S('a'), S('s'), S('d'), S('f'), S('g'), __,                /*###*/   S('h'), S('j'), S('k'), S('l'), S(';'), __, S(KEY_KP_ENTER)},
-    {S(KEY_LEFT_SHIFT), S('z'), S('x'), S('c'), S('v'), S('b'), __,         /*###*/   S('n'),  __, S('m'), S(','), S('.'), S('/'), S(KEY_RIGHT_SHIFT)},
-    {S(KEY_LEFT_CTRL), S(KEY_LEFT_GUI), S(KEY_LEFT_ALT), __, S(' '), __, __, /*###*/ MO(1),   __,   __,   __, S('x'), S('y'), S('z')},
+    {S(KEY_ESC), S('q'), S('w'), S('e'), S('r'), S('t'), __,                 /*###*/ S('y'), S('u'), S('i'), S('o'), S('p'), S(KEY_BACKSPACE), S(KEY_BACKSPACE)},
+    {S(KEY_TAB), S('a'), S('s'), S('d'), S('f'), S('g'), __,                 /*###*/ S('h'), S('j'), S('k'), S('l'), S(';'), __, S(KEY_KP_ENTER)},
+    {S(KEY_LEFT_SHIFT), S('z'), S('x'), S('c'), S('v'), S('b'), __,          /*###*/ S('n'),     __, S('m'), S(','), S('.'), S('/'), S(KEY_RIGHT_SHIFT)},
+    {S(KEY_LEFT_CTRL), S(KEY_LEFT_GUI), S(KEY_LEFT_ALT), __, S(' '), __, __, /*###*/ MO(1),      __,     __,  MO(2), S('x'), S('y'), S('z')},
   },
 
   // TODO the ( " ) could have a better meaning with shift held down
   {
-    { S('`'),      NA,     NA,     NA,      NA,     __, __, /*###*/ NA, NA, NA, NA, NA, S(KEY_DELETE), },
+    { S('`'),      NA,     NA,     NA,      NA,     __, __, /*###*/ NA, NA, NA, NA, NA, S(KEY_DELETE), S(KEY_DELETE)},
     { S('0'),  S('1'), S('2'), S('3'),  S('4'), S('5'), __, /*###*/ S('6'), S('7'), S('8'), S('9'), XX, __, XX },
     {     XX, S('\\'), S('9'), S('\''), S('0'),     XX, __, /*###*/ S('-'), __, S('='), S('['), S(']'), NA, XX },
-    { XX, S(KEY_MENU),     XX,      __,  MO(2),     __, __, /*###*/ NA, __, __, __, XX, XX, XX },
+    { XX, S(KEY_MENU),     XX,      __,  MO(2),     __, __, /*###*/ NA, __, __, NA, XX, XX, XX },
   },
 
   // TODO make z,x,c,v use ctrl in front of them
   {
-    {XX, XX, S(KEY_LEFT_SHIFT), XX, XX, XX, __,                          /*###*/ XX, S(KEY_HOME),         S(KEY_UP_ARROW), S(KEY_END),         XX, XX, XX},
+    {XX, XX, S(KEY_LEFT_SHIFT), XX, XX, XX, __,                          /*###*/ XX, NA,                S(KEY_UP_ARROW),           NA,         XX, XX, XX},
     {XX, S(KEY_LEFT_CTRL), S(KEY_LEFT_GUI), S(KEY_LEFT_ALT), XX, XX, __, /*###*/ XX, S(KEY_LEFT_ARROW), S(KEY_DOWN_ARROW), S(KEY_RIGHT_ARROW), XX, __, XX},
-    {XX, 'z', 'x', 'c', 'v', 'b', __,                                    /*###*/ XX, __, XX, XX, XX, XX, XX}, 
-    {XX, XX, XX, __, NA, __, __,                                         /*###*/ XX, __, __, __, XX, XX, XX},
+    {XX, 'z', 'x', 'c', 'v', 'b', __,                                    /*###*/ XX, __, S(KEY_HOME),                  NA, S(KEY_END),             XX, XX}, 
+    {XX, XX, XX, __, NA, __, __,                                         /*###*/ NA, __, __, NA,                                               XX, XX, XX},
   },
   {
     { XX, XX, XX, XX, XX, XX, __, /*###*/ XX, XX, XX, XX, XX, XX, XX },
