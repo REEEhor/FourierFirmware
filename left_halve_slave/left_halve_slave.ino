@@ -60,8 +60,8 @@ const int rows[] = {
   A3, 6, 7, 8
 };
 
-#define MAX_SPECIAL_SHIFT_KEYS 20
-#define MAX_MACROS 20
+#define MAX_SPECIAL_SHIFT_KEYS 0
+#define MAX_MACROS 0
 
 enum class Descriptor: byte {
   SIMPLE_KEY = 0,           // Bottom byte is the byte to be sent via `Keyboard.press(key_code)`.
@@ -280,7 +280,8 @@ PressedKeys key_state{};
 
 #define MO(layer_id) KeyCode::create_momentary_layer(layer_id)
 #define S(chr)       KeyCode::create_simple(chr)
-#define CZ(chr)      KeyCode::create_czech_key(chr)
+#define CRN(chr)     KeyCode::create_czech_key(chr, Diacritic::CARON)
+#define ACT(chr)     KeyCode::create_czech_key(chr, Diacritic::ACUTE_ACCENT)
 #define __           KeyCode::from_parts(Descriptor::HARDWARE_INVALID_KEY)
 #define NA           KeyCode::from_parts(Descriptor::NO_ACTION)
 #define XX           KeyCode::from_parts(Descriptor::THROUGH_KEY)
@@ -306,10 +307,10 @@ const KeyCode layers_keymap [MAX_LAYERS][KEYBOARD_ROWS_COUNT][KEYBOARD_COLS_COUN
 
   // TODO the ( " ) could have a better meaning with shift held down
   {
-    { S('`'),      NA,     NA,     NA,      NA,     __, __, /*###*/ NA, NA, NA, NA, NA, S(KEY_DELETE), S(KEY_DELETE)},
-    { S('0'),  S('1'), S('2'), S('3'),  S('4'), S('5'), __, /*###*/ S('6'), S('7'), S('8'), S('9'), XX, __, XX },
-    {     XX, S('\\'), S('9'), S('\''), S('0'),     XX, __, /*###*/ S('-'), __, S('='), S('['), S(']'), NA, XX },
-    { XX, S(KEY_MENU),     XX,      __,  MO(2),     __, __, /*###*/ NA, __, __, NA, XX, XX, XX },
+    { S('`'),       NA, CRN('e'), CRN('s'), CRN('c'), CRN('r'), __, /*###*/ CRN('z'), ACT('y'), ACT('a'), ACT('i'), ACT('e'), S(KEY_DELETE), S(KEY_DELETE)},
+    { S('0'),   S('1'),   S('2'),   S('3'),   S('4'),   S('5'), __, /*###*/ S('6'), S('7'), S('8'), S('9'), XX, __, XX },
+    {     XX,  S('\\'),   S('9'),  S('\''),   S('0'),       XX, __, /*###*/ S('-'), __, S('='), S('['), S(']'), NA, XX },
+    { XX, S(KEY_MENU),        XX,       __,    MO(2),       __, __, /*###*/ NA, __, __, NA, XX, XX, XX },
   },
 
   // TODO make z,x,c,v use ctrl in front of them
@@ -362,7 +363,7 @@ void receive_callback(int byte_count) {
     byte col_id = Wire.read();
     byte row_id = Wire.read();
 
-    //sprintf(str_buffer, "[col=%d row=%d]: %s", col_id, row_id, is_button_pressed ? "PRESS" : "RELEASE");
+    //sprintf(str_buffer, "[c%d r%d]: %s", col_id, row_id, is_button_pressed ? "PRESS" : "RELEASE");
     //Serial.println(str_buffer);
     col_id = col_id + LEN(cols);
     if (is_button_pressed) {
@@ -393,7 +394,7 @@ void handle_key_up(KeyPosition key) {
   byte byte_for_release = key_state.release_byte_for(key);
   if (!byte_for_release) {
     // We encountered a key, that was released before
-    DBG("Released key[row=%d][col=%d], which was released before", key.row_id, key.column_id);
+    DBG("HW released key[r%d][c%d] auto-released key", key.row_id, key.column_id);
     return;
   }
 
@@ -405,7 +406,7 @@ void handle_key_up(KeyPosition key) {
 
   if (byte_for_release == PRESSED_BUT_NO_INFO) {
     key_state.set_key_state(key, RELEASED);
-    DBG("unknown key was released [row=%d][col=%d]", key.row_id, key.column_id);
+    DBG("unknown key was released [r%d][c%d]", key.row_id, key.column_id);
     return;
   }
 
@@ -419,7 +420,7 @@ void handle_key_up(KeyPosition key) {
 void handle_layer_exit() {
   // Check if the key that holds the current layer is held down
   while (!key_state.release_byte_for(layer_stack.current_leave_key())) {
-    DBG("Leaving layer [%d] (releasing non-through keys)", layer_stack.current_layer_id());
+    DBG("Leaving layer [%d]", layer_stack.current_layer_id());
 
     const auto current_layer = layers_keymap[layer_stack.current_layer_id()];
 
@@ -442,7 +443,7 @@ void handle_layer_exit() {
         #ifdef SEND_KEYS
           Keyboard.release(release_byte);
         #endif
-        DBG("auto-released key '%c' [%d], because leaving layer %d", release_byte, release_byte, layer_stack.current_layer_id());
+        DBG("auto-released key '%c' [%d] (leaving layer %d)", release_byte, release_byte, layer_stack.current_layer_id());
       }
     }
 
@@ -464,20 +465,17 @@ void handle_key_down(KeyPosition key) {
       return;
     }
     case Descriptor::HARDWARE_INVALID_KEY:
-      LOG_ERROR("");
-      LOG_ERROR("o.O ! A key that should not be possible to use on the keyboard was pressed ! O.o");
-      LOG_ERROR("  hint: This is probably because there is a `__` in a bad spot in layout definition ;)");
-      LOG_ERROR("");
+      LOG_ERROR("HW invalid key pressed at [c%d][r%d]", key.column_id, key.row_id);
       return;
     case Descriptor::NO_ACTION:
-      DBG("No-action key was pressed");
+      DBG("NA key pressed");
       return;
     case Descriptor::THROUGH_KEY:
-      LOG_ERROR("Probably a through key is in the bottom row at [col=%d][row=%d]", key.column_id, key.row_id);
+      LOG_ERROR("Probably a through key is in the bottom row at [c%d][r%d]", key.column_id, key.row_id);
       return;
     case Descriptor::MACRO_KEY: {
       byte macro_idx = key_code.data_bits();
-      DBG("(TODO) Pressed macro key for macro with idx %d", macro_idx);
+      DBG("Pressed macro key for macro with idx %d", macro_idx);
 
       //TODO
       return;
@@ -495,8 +493,9 @@ void handle_key_down(KeyPosition key) {
       return;
     }
     case Descriptor::SPECIAL_SHIFT: {
-      byte shift_array_idx = key_code.data_bits();
-      DBG("(TODO) Pressed shift-alternative key for with idx %d", shift_array_idx);
+      // TODO: this will be re-thought
+      // byte shift_array_idx = key_code.data_bits();
+      DBG("Special shift key pressed");
 
       // TODO
       // KeyCode non_shift_key_code = shift_array_or_something[shift_array_idx][0];
@@ -507,15 +506,50 @@ void handle_key_down(KeyPosition key) {
       char pressed_char = key_code.get_czech_unmodified_char();
 
       if (key_code.get_czech_diacritic() == Diacritic::CARON) {
-        DBG("(TODO) Pressed czech key '%c' with CARON", pressed_char); 
+        DBG("Pressed czech key '%c' with CARON", pressed_char); 
       } else {
-        DBG("(TODO) Pressed czech key '%c' with ACUTE_ACCENT", pressed_char); 
+        DBG("Pressed czech key '%c' with ACUTE", pressed_char); 
       }
 
-      // TODO
-      // // Not this since we have to modify that buffer
-      // char[] acute_macro_buffer = "AltGr_up_down X_up_down";
-      // char[] caron_macro_buffer = "Shift_up AltGr_up_down X_up_down";
+      #undef SEND_KEYS
+      #ifdef SEND_KEYS
+        // Press AltGr
+        Keyboard.press(KEY_LEFT_ALT);
+        Keyboard.press(KEY_LEFT_CTRL);
+
+        // Press Shift if it is needed
+        bool should_press_shift = key_code.get_czech_diacritic() == Diacritic::CARON;
+        bool should_release_shift = false;
+        if (should_press_shift) {
+          // If we actually pressed a key at this moment,
+          // we should track it so we can release it later.
+          should_release_shift = (Keyboard.press(KEY_LEFT_SHIFT) == 1);
+          DBG("We should press shift. %s", should_release_shift ? "It was NOT pressed" : "It was already pressed"); 
+        }
+
+        // TODO: we also have release the shift here otherwise we are unable to write big letters with the acute accent
+
+        // Press the key for the diacritic (caron or acute accent)
+        Keyboard.press('=');
+        Keyboard.release('=');
+
+        if (should_release_shift) {
+          DBG("We are releasing the SHIFT we used to get the caron"); 
+          Keyboard.release(KEY_LEFT_SHIFT);
+        } else {
+          DBG("Releasing shift"); 
+        }
+
+        // Release AltGr
+        Keyboard.release(KEY_LEFT_CTRL);
+        Keyboard.release(KEY_LEFT_ALT);
+
+        // Press the actual key
+        Keyboard.press(pressed_char);
+        Keyboard.release(pressed_char);
+
+      #endif // SEND_KEYS
+
       return;
     }
   }
@@ -534,7 +568,6 @@ void setup() {
     int row_pin = rows[row];
     pinMode(row_pin, OUTPUT);
   }
-  DBG("I'm allive :D");
 
   const byte INVALID_KEY_POSITION_COORDINATE = 0xff; // There will never be a key at row 255 or column 255
   layer_stack.top().layer_leave_key.row_id = INVALID_KEY_POSITION_COORDINATE;
